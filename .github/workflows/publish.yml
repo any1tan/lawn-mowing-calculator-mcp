@@ -1,0 +1,30 @@
+name: publish-mcp
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  id-token: write
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NAME: ${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --omit=dev
+      - run: npx -y @anthropic-ai/mcpb pack . "$NAME.mcpb"
+      - name: release
+        run: |
+          gh release view v1.0.0 >/dev/null 2>&1 && gh release upload v1.0.0 "$NAME.mcpb" --clobber || gh release create v1.0.0 "$NAME.mcpb" --title v1.0.0 --notes "MCPB bundle"
+      - name: sha into server.json
+        run: |
+          SHA=$(sha256sum "$NAME.mcpb" | cut -d' ' -f1)
+          jq --arg s "$SHA" '.packages[0].fileSha256=$s' server.json > s.tmp && mv s.tmp server.json && cat server.json
+      - run: curl -sL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish

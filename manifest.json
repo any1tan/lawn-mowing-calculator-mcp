@@ -1,0 +1,1 @@
+{"manifest_version":"0.2","name":"lawn-mowing-calculator-mcp","version":"1.0.0","description":"Lawn area, mowing time and mowing price estimate tools for AI assistants.","author":{"name":"any1tan"},"server":{"type":"node","entry_point":"index.js","mcp_config":{"command":"node","args":["${__dirname}/index.js"]}},"license":"MIT"}
