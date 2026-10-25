@@ -6,6 +6,9 @@ on:
 permissions:
   id-token: write
   contents: write
+concurrency:
+  group: mcp-publish-${{ github.repository }}
+  cancel-in-progress: false
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -14,17 +17,40 @@ jobs:
       NAME: ${{ github.event.repository.name }}
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Test publication guard
+        run: python3 -m unittest discover -s tests -v
+      - name: Verify existing registry version and release asset
+        id: registry
+        run: python3 scripts/registry_state.py
       - uses: actions/setup-node@v4
+        if: steps.registry.outputs.publish_needed == 'true'
         with: { node-version: 20 }
       - run: npm install --omit=dev
+        if: steps.registry.outputs.publish_needed == 'true'
       - run: npx -y @anthropic-ai/mcpb pack . "$NAME.mcpb"
-      - name: release
+        if: steps.registry.outputs.publish_needed == 'true'
+      - name: release without overwriting immutable assets
+        if: steps.registry.outputs.publish_needed == 'true'
+        env:
+          TAG: ${{ steps.registry.outputs.tag }}
         run: |
-          gh release view v1.0.0 >/dev/null 2>&1 && gh release upload v1.0.0 "$NAME.mcpb" --clobber || gh release create v1.0.0 "$NAME.mcpb" --title v1.0.0 --notes "MCPB bundle"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$NAME.mcpb" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$NAME.mcpb" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes "MCPB bundle"
+          fi
       - name: sha into server.json
+        if: steps.registry.outputs.publish_needed == 'true'
         run: |
           SHA=$(sha256sum "$NAME.mcpb" | cut -d' ' -f1)
-          jq --arg s "$SHA" '.packages[0].fileSha256=$s' server.json > s.tmp && mv s.tmp server.json && cat server.json
-      - run: curl -sL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+          jq --arg s "$SHA" '.packages[0].fileSha256=$s' server.json > s.tmp && mv s.tmp server.json
+      - run: curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+        if: steps.registry.outputs.publish_needed == 'true'
       - run: ./mcp-publisher login github-oidc
+        if: steps.registry.outputs.publish_needed == 'true'
       - run: ./mcp-publisher publish
+        if: steps.registry.outputs.publish_needed == 'true'
+      - name: Verify published manifest and actual release bytes
+        if: steps.registry.outputs.publish_needed == 'true'
+        run: python3 scripts/registry_state.py --require-published
